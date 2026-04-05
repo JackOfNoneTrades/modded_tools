@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+cd "$PROJECT_DIR"
+
+echo -e "${CYAN}Run Client${NC}"
+
+enable_debug=false
+mode="${RUNCLIENT_PRESET_MODE:-}"
+
+if [ -z "$mode" ]; then
+    echo "Select mode:"
+    mode=0
+    select_option "Normal" "Debug" || mode=$?
+fi
+
+case "$mode" in
+    0)
+        ;;
+    1)
+        enable_debug=true
+        ;;
+    *)
+        echo -e "${RED}Invalid RUNCLIENT_PRESET_MODE: ${mode}. Expected 0-1.${NC}"
+        exit 1
+        ;;
+esac
+
+java_suffix="$(select_java_task_suffix)" || exit 1
+RUN_TASK="runClient${java_suffix}"
+
+if [ -z "$java_suffix" ]; then
+    echo -e "${GREEN}Using Gradle task ${RUN_TASK} (Java 8)${NC}"
+else
+    echo -e "${GREEN}Using Gradle task ${RUN_TASK} (Java ${java_suffix})${NC}"
+fi
+
+GRADLE_ARGS=()
+
+read -p "Enter a username (default: Developer): " USERNAME
+USERNAME=${USERNAME:-Developer}
+GRADLE_ARGS+=(--username="$USERNAME")
+
+if $enable_debug; then
+    DEFAULT_DEBUG_PORT="${CLIENT_DEBUG_PORT:-5005}"
+    DEBUG_SUSPEND="${CLIENT_DEBUG_SUSPEND:-n}"
+    DEBUG_PROMPT="${CLIENT_DEBUG_PROMPT:-1}"
+
+    if [ "$DEBUG_PROMPT" = "0" ] || [ "$DEBUG_PROMPT" = "false" ]; then
+        DEBUG_PORT="$DEFAULT_DEBUG_PORT"
+    else
+        read -p "Debug port (default: ${DEFAULT_DEBUG_PORT}): " DEBUG_PORT
+        DEBUG_PORT=${DEBUG_PORT:-$DEFAULT_DEBUG_PORT}
+    fi
+
+    GRADLE_ARGS+=(--mcJvmArgs="-agentlib:jdwp=transport=dt_socket,server=y,suspend=${DEBUG_SUSPEND},address=*:${DEBUG_PORT}")
+    echo -e "${YELLOW}Client debug enabled on port ${DEBUG_PORT} (suspend=${DEBUG_SUSPEND})${NC}"
+fi
+
+echo -e "${CYAN}Launching client...${NC}"
+./gradlew "$RUN_TASK" ${GRADLE_ARGS[@]+"${GRADLE_ARGS[@]}"}
