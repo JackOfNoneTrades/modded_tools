@@ -9,6 +9,40 @@ import sys
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+
+try:
+    ET.fromstring("<x/>")
+except ImportError:
+    # Broken expat (e.g. Python compiled against newer libexpat than the
+    # system provides).  Monkey-patch ET.fromstring with a minimal regex
+    # parser – sufficient for the simple Maven metadata XML we handle.
+    def _fromstring_fallback(text, parser=None):  # type: ignore[override]
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
+        text = re.sub(r"<\?xml[^?]*\?>", "", text).strip()
+        root = None
+        stack: list[ET.Element] = []
+        for m in re.finditer(r"<(/?)(\w[\w.\-]*)([^>]*?)(/?)>", text):
+            is_close, tag, self_closing = m.group(1) == "/", m.group(2), m.group(4) == "/"
+            if not is_close:
+                elem = ET.Element(tag)
+                if stack:
+                    stack[-1].append(elem)
+                else:
+                    root = elem
+                if not self_closing:
+                    inner_start = m.end()
+                    next_lt = text.find("<", inner_start)
+                    if next_lt > inner_start:
+                        elem.text = text[inner_start:next_lt].strip() or None
+                    stack.append(elem)
+            elif stack and stack[-1].tag == tag:
+                stack.pop()
+        if root is None:
+            raise ET.ParseError("no root element")
+        return root
+
+    ET.fromstring = _fromstring_fallback  # type: ignore[assignment]
 from typing import Dict, List, Optional, Tuple
 
 
