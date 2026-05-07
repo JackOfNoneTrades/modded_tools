@@ -38,13 +38,13 @@ fi
 GRADLE_ARGS=()
 
 # Ensure online-mode=false for offline
-PROPS_FILE="$PROJECT_DIR/run/server/server.properties"
-if [ -f "$PROPS_FILE" ]; then
-    if grep -q "^online-mode=true" "$PROPS_FILE"; then
-        sed -i '' 's/^online-mode=true/online-mode=false/' "$PROPS_FILE"
-        echo -e "${YELLOW}Set online-mode=false in server.properties${NC}"
-    fi
-fi
+#PROPS_FILE="$PROJECT_DIR/run/server/server.properties"
+#if [ -f "$PROPS_FILE" ]; then
+#    if grep -q "^online-mode=true" "$PROPS_FILE"; then
+#        sed -i '' 's/^online-mode=true/online-mode=false/' "$PROPS_FILE"
+#        echo -e "${YELLOW}Set online-mode=false in server.properties${NC}"
+#    fi
+#fi
 
 if $enable_debug; then
     DEFAULT_DEBUG_PORT="${SERVER_DEBUG_PORT:-5006}"
