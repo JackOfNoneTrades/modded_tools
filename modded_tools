@@ -34,6 +34,7 @@ scripts=(
     "$SCRIPT_DIR/bin/check_dependency_updates.sh"
     "$SCRIPT_DIR/bin/setup_github_credentials.sh"
     "$SCRIPT_DIR/bin/deploy_to_server.sh"
+    "$SCRIPT_DIR/bin/deploy_to_local.sh"
 )
 options=(
     "Build Mod"
@@ -50,6 +51,7 @@ options=(
     "Check Dependencies For Updates"
     "Setup GitHub Credentials (Folder)"
     "Deploy To Server"
+    "Deploy To Local"
 )
 
 select_option "${options[@]}"
