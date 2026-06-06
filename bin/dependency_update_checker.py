@@ -61,8 +61,19 @@ MODRINTH_MAVEN_BASES = [
     "https://api.modrinth.com/maven",
 ]
 
+PROJECT_REPOSITORY_FILES = [
+    "repositories.gradle",
+    "repositories.gradle.kts",
+]
+
 COORD_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.+\-]+$")
 PRE_SUFFIX_RE = re.compile(r"(?i)(?:^|[._-])pre$")
+BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+REPOSITORY_URL_PATTERNS = [
+    re.compile(r"""\burl\s*=\s*(?:uri\s*\(\s*)?["']([^"']+)["']\s*\)?"""),
+    re.compile(r"""\burl\s+(?:uri\s*\(\s*)?["']([^"']+)["']\s*\)?"""),
+    re.compile(r"""\bsetUrl\s*\(\s*(?:uri\s*\(\s*)?["']([^"']+)["']\s*\)?\s*\)"""),
+]
 
 
 def local_name(tag: str) -> str:
@@ -194,20 +205,87 @@ def parse_coordinate(literal_value: str) -> Optional[Tuple[str, str, str, Tuple[
     return group, artifact, version, extras
 
 
-def metadata_urls(group: str, artifact: str) -> List[str]:
+def unique_in_order(values: List[str]) -> List[str]:
+    seen = set()
+    unique_values = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique_values.append(value)
+    return unique_values
+
+
+def normalize_repository_url(url: str) -> Optional[str]:
+    normalized = url.strip().rstrip("/")
+    if not normalized.startswith(("http://", "https://")):
+        return None
+    if "$" in normalized:
+        return None
+    return normalized
+
+
+def strip_gradle_comments(content: str) -> str:
+    without_block_comments = BLOCK_COMMENT_RE.sub("", content)
+    lines = [line[: find_comment_start(line)] for line in without_block_comments.splitlines()]
+    return "\n".join(lines)
+
+
+def extract_maven_repository_urls(content: str) -> List[str]:
+    uncommented = strip_gradle_comments(content)
+    matches: List[Tuple[int, str]] = []
+    for pattern in REPOSITORY_URL_PATTERNS:
+        for match in pattern.finditer(uncommented):
+            normalized = normalize_repository_url(match.group(1))
+            if normalized:
+                matches.append((match.start(), normalized))
+    urls = [url for _, url in sorted(matches, key=lambda item: item[0])]
+    return unique_in_order(urls)
+
+
+def environment_extra_maven_repositories() -> List[str]:
+    raw_extra = os.environ.get("DEPENDENCY_CHECK_EXTRA_MAVEN_REPOS", "")
+    if not raw_extra.strip():
+        return []
+
+    urls = []
+    for entry in raw_extra.split(","):
+        normalized = normalize_repository_url(entry)
+        if normalized:
+            urls.append(normalized)
+    return unique_in_order(urls)
+
+
+def discover_project_maven_repositories(deps_file: str) -> List[str]:
+    deps_dir = os.path.dirname(os.path.abspath(deps_file))
+    urls: List[str] = []
+
+    for file_name in PROJECT_REPOSITORY_FILES:
+        repo_file = os.path.join(deps_dir, file_name)
+        if not os.path.isfile(repo_file):
+            continue
+
+        try:
+            with open(repo_file, "r", encoding="utf-8") as handle:
+                urls.extend(extract_maven_repository_urls(handle.read()))
+        except OSError:
+            continue
+
+    return unique_in_order(urls)
+
+
+def metadata_urls(group: str, artifact: str, extra_repos: Optional[List[str]] = None) -> List[str]:
     if group == "curse.maven":
         return [f"{base.rstrip('/')}/{artifact}/maven-metadata.xml" for base in CURSE_MAVEN_BASES]
 
     if group == "maven.modrinth":
         return [f"{base.rstrip('/')}/{group.replace('.', '/')}/{artifact}/maven-metadata.xml" for base in MODRINTH_MAVEN_BASES]
 
-    extra_repos: List[str] = []
-    raw_extra = os.environ.get("DEPENDENCY_CHECK_EXTRA_MAVEN_REPOS", "")
-    if raw_extra.strip():
-        extra_repos = [entry.strip() for entry in raw_extra.split(",") if entry.strip()]
+    if extra_repos is None:
+        extra_repos = environment_extra_maven_repositories()
 
     group_path = group.replace(".", "/")
-    all_bases = DEFAULT_MAVEN_BASES + extra_repos
+    all_bases = unique_in_order(DEFAULT_MAVEN_BASES + extra_repos)
     return [f"{base.rstrip('/')}/{group_path}/{artifact}/maven-metadata.xml" for base in all_bases]
 
 
@@ -262,6 +340,9 @@ def scan_dependencies(deps_file: str, timeout_seconds: float) -> Dict[str, objec
     with open(deps_file, "r", encoding="utf-8") as handle:
         content = handle.read()
 
+    extra_repos = unique_in_order(
+        environment_extra_maven_repositories() + discover_project_maven_repositories(deps_file)
+    )
     lines = content.splitlines(keepends=True)
     offset = 0
 
@@ -313,7 +394,7 @@ def scan_dependencies(deps_file: str, timeout_seconds: float) -> Dict[str, objec
         is_best_effort = group in {"curse.maven", "maven.modrinth"}
 
         if cache_key not in cache:
-            urls = metadata_urls(group, artifact)
+            urls = metadata_urls(group, artifact, extra_repos)
             cache[cache_key] = fetch_latest_from_metadata(urls, timeout_seconds)
 
         latest_version, source_url, versions = cache[cache_key]

@@ -67,6 +67,67 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
         self.assertEqual(len(state["candidates"]), 1)
         self.assertEqual(state["candidates"][0]["latest_version"], "2.2.9-GTNH")
 
+    def test_extract_maven_repository_urls_supports_common_gradle_forms(self) -> None:
+        urls = checker.extract_maven_repository_urls(
+            """
+            repositories {
+                // url = "https://ignored.example/releases"
+                maven { url = "https://maven.fentanylsolutions.org/releases/" }
+                maven { url = uri("https://mvn.falsepattern.com/releases/") }
+                maven { url "https://mvn.ventooth.com/releases/" }
+            }
+            """
+        )
+
+        self.assertEqual(
+            urls,
+            [
+                "https://maven.fentanylsolutions.org/releases",
+                "https://mvn.falsepattern.com/releases",
+                "https://mvn.ventooth.com/releases",
+            ],
+        )
+
+    def test_scan_dependencies_uses_repositories_gradle_next_to_deps_file(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        project_dir = Path(temp_dir.name)
+        deps_file = project_dir / "dependencies.gradle"
+        deps_file.write_text(
+            'runtimeOnlyNonPublishable("org.fentanylsolutions.tabfaces:TabFaces:e023b1a-snapshot:dev")\n',
+            encoding="utf-8",
+        )
+        (project_dir / "repositories.gradle").write_text(
+            """
+            repositories {
+                maven {
+                    name = "Fent Maven"
+                    url = "https://maven.fentanylsolutions.org/releases"
+                }
+            }
+            """,
+            encoding="utf-8",
+        )
+        captured_urls = []
+
+        def fetch_latest(urls, timeout_seconds):
+            captured_urls.extend(urls)
+            return (
+                "1.0.16",
+                "https://maven.fentanylsolutions.org/releases/org/fentanylsolutions/tabfaces/TabFaces/maven-metadata.xml",
+                ["e023b1a-snapshot", "1.0.16"],
+            )
+
+        with mock.patch.object(checker, "fetch_latest_from_metadata", side_effect=fetch_latest):
+            state = checker.scan_dependencies(str(deps_file), timeout_seconds=0.01)
+
+        self.assertIn(
+            "https://maven.fentanylsolutions.org/releases/org/fentanylsolutions/tabfaces/TabFaces/maven-metadata.xml",
+            captured_urls,
+        )
+        self.assertEqual(len(state["candidates"]), 1)
+        self.assertEqual(state["candidates"][0]["latest_version"], "1.0.16")
+
 
 if __name__ == "__main__":
     unittest.main()
